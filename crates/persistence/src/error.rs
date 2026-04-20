@@ -24,5 +24,13 @@ pub enum PersistenceError {
 
     #[error("invalid persisted reconciliation decision: {0}")] InvalidReconDecision(String),
 
+    #[error("lease not held or lease token mismatch for intent: {0}")] LeaseNotHeld(Uuid),
+
+    #[error("worker id cannot be empty")]
+    EmptyWorkerId,
+
+    #[error("lease duration must be greater than zero")]
+    InvalidLeaseDuration,
+
     #[error("invariant violation: {0}")] InvariantViolation(String),
 }

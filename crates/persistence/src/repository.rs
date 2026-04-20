@@ -385,8 +385,8 @@ impl PostgresPersistence {
                     )?
             )
             .bind(attempt.ended_at)
-            .bind(raw_provider_response_summary.map(Json))
             .bind(outcome_kind)
+            .bind(raw_provider_response_summary.map(Json))
             .bind(error_category)
             .bind(result_reason)
             .bind(attempt.provider_reference.as_ref().map(|p| p.0.as_str()))

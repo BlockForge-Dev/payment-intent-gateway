@@ -114,5 +114,5 @@ That single distinction is one of the biggest signals of maturity in this projec
 
 Why receipt exists this early
 
-Because your system is not just about doing work.
+Because this system is not just about doing work.
 It is about preserving operational truth.
