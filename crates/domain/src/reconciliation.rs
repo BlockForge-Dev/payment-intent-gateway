@@ -1,7 +1,7 @@
-use chrono::{ DateTime, Utc };
-use serde::{ Deserialize, Serialize };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
-use crate::{ EvidenceSource, IntentState };
+use crate::{EvidenceSource, IntentState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReconComparison {

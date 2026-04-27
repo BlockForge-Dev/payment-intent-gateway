@@ -5,20 +5,23 @@ use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum ApplicationError {
-    #[error("validation error: {0}")] Validation(String),
+    #[error("validation error: {0}")]
+    Validation(String),
 
-    #[error("unsupported provider: {0}")] UnsupportedProvider(String),
+    #[error("unsupported provider: {0}")]
+    UnsupportedProvider(String),
 
-    #[error("idempotency conflict for scope={scope} key={key}")] IdempotencyConflict {
-        scope: String,
-        key: String,
-    },
+    #[error("idempotency conflict for scope={scope} key={key}")]
+    IdempotencyConflict { scope: String, key: String },
 
-    #[error("payment intent not found: {0}")] IntentNotFound(Uuid),
+    #[error("payment intent not found: {0}")]
+    IntentNotFound(Uuid),
 
-    #[error(transparent)] Domain(#[from] DomainError),
+    #[error(transparent)]
+    Domain(#[from] DomainError),
 
-    #[error(transparent)] Persistence(PersistenceError),
+    #[error(transparent)]
+    Persistence(PersistenceError),
 }
 
 impl From<PersistenceError> for ApplicationError {

@@ -1,7 +1,7 @@
 //These are shared domain types.
 
-use chrono::{ DateTime, Utc };
-use serde::{ Deserialize, Serialize };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub type IntentId = Uuid;
@@ -36,15 +36,8 @@ pub struct ProviderReference(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceSource {
-    ProviderWebhook {
-        event_id: String,
-    },
-    ProviderStatusCheck {
-        checked_at: DateTime<Utc>,
-    },
-    ManualOperatorDecision {
-        operator_id: String,
-        note: String,
-    },
+    ProviderWebhook { event_id: String },
+    ProviderStatusCheck { checked_at: DateTime<Utc> },
+    ManualOperatorDecision { operator_id: String, note: String },
     InternalValidation,
 }

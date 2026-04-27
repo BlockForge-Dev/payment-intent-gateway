@@ -1,13 +1,13 @@
 use std::time::Duration as StdDuration;
 
-use chrono::{ DateTime, Duration, Utc };
-use domain::{ IntentId, PaymentIntent };
-use serde::{ Deserialize, Serialize };
-use serde_json::{ json, Value };
-use sqlx::{ FromRow, Postgres, Transaction };
+use chrono::{DateTime, Duration, Utc};
+use domain::{IntentId, PaymentIntent};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sqlx::{FromRow, Postgres, Transaction};
 use uuid::Uuid;
 
-use crate::{ PersistenceError, PostgresPersistence };
+use crate::{PersistenceError, PostgresPersistence};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeasedPaymentIntent {
@@ -33,7 +33,7 @@ impl PostgresPersistence {
         &self,
         worker_id: &str,
         now: DateTime<Utc>,
-        lease_for: StdDuration
+        lease_for: StdDuration,
     ) -> Result<Option<LeasedPaymentIntent>, PersistenceError> {
         if worker_id.trim().is_empty() {
             return Err(PersistenceError::EmptyWorkerId);
@@ -42,16 +42,14 @@ impl PostgresPersistence {
             return Err(PersistenceError::InvalidLeaseDuration);
         }
 
-        let lease_expires_at =
-            now +
-            Duration::from_std(lease_for).map_err(|_| PersistenceError::InvalidLeaseDuration)?;
+        let lease_expires_at = now
+            + Duration::from_std(lease_for).map_err(|_| PersistenceError::InvalidLeaseDuration)?;
 
         let lease_token = Uuid::new_v4();
         let mut tx = self.pool().begin().await?;
 
-        let row = sqlx
-            ::query_as::<_, LeaseClaimRow>(
-                r#"
+        let row = sqlx::query_as::<_, LeaseClaimRow>(
+            r#"
             WITH candidate AS (
                 SELECT
                     id,
@@ -97,13 +95,14 @@ impl PostgresPersistence {
                 p.lease_token,
                 p.last_leased_at AS leased_at,
                 p.lease_expires_at
-            "#
-            )
-            .bind(now)
-            .bind(worker_id)
-            .bind(lease_token)
-            .bind(lease_expires_at)
-            .fetch_optional(&mut *tx).await?;
+            "#,
+        )
+        .bind(now)
+        .bind(worker_id)
+        .bind(lease_token)
+        .bind(lease_expires_at)
+        .fetch_optional(&mut *tx)
+        .await?;
 
         let Some(row) = row else {
             tx.commit().await?;
@@ -118,8 +117,9 @@ impl PostgresPersistence {
                 "state": "leased",
                 "note": format!("lease acquired by worker {}", worker_id),
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         insert_audit_event_tx(
             &mut tx,
@@ -132,28 +132,23 @@ impl PostgresPersistence {
                 "lease_expires_at": lease_expires_at,
                 "previous_state": row.previous_state,
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         tx.commit().await?;
 
         let intent = self.get_intent_by_id(row.intent_id).await?;
 
-        Ok(
-            Some(LeasedPaymentIntent {
-                intent,
-                lease_token: row.lease_token
-                    .or(Some(lease_token))
-                    .ok_or_else(|| {
-                        PersistenceError::InvariantViolation(
-                            "lease_token missing after claim".to_string()
-                        )
-                    })?,
-                worker_id: row.lease_owner.unwrap_or_else(|| worker_id.to_string()),
-                leased_at: row.leased_at.unwrap_or(now),
-                lease_expires_at: row.lease_expires_at.unwrap_or(lease_expires_at),
-            })
-        )
+        Ok(Some(LeasedPaymentIntent {
+            intent,
+            lease_token: row.lease_token.or(Some(lease_token)).ok_or_else(|| {
+                PersistenceError::InvariantViolation("lease_token missing after claim".to_string())
+            })?,
+            worker_id: row.lease_owner.unwrap_or_else(|| worker_id.to_string()),
+            leased_at: row.leased_at.unwrap_or(now),
+            lease_expires_at: row.lease_expires_at.unwrap_or(lease_expires_at),
+        }))
     }
 
     pub async fn renew_lease(
@@ -161,21 +156,19 @@ impl PostgresPersistence {
         intent_id: IntentId,
         lease_token: Uuid,
         now: DateTime<Utc>,
-        lease_for: StdDuration
+        lease_for: StdDuration,
     ) -> Result<LeasedPaymentIntent, PersistenceError> {
         if lease_for.is_zero() {
             return Err(PersistenceError::InvalidLeaseDuration);
         }
 
-        let new_expiry =
-            now +
-            Duration::from_std(lease_for).map_err(|_| PersistenceError::InvalidLeaseDuration)?;
+        let new_expiry = now
+            + Duration::from_std(lease_for).map_err(|_| PersistenceError::InvalidLeaseDuration)?;
 
         let mut tx = self.pool().begin().await?;
 
-        let row = sqlx
-            ::query_as::<_, LeaseClaimRow>(
-                r#"
+        let row = sqlx::query_as::<_, LeaseClaimRow>(
+            r#"
             UPDATE payment_intents
             SET
                 lease_expires_at = $3,
@@ -193,13 +186,14 @@ impl PostgresPersistence {
                 lease_token,
                 last_leased_at AS leased_at,
                 lease_expires_at
-            "#
-            )
-            .bind(intent_id)
-            .bind(now)
-            .bind(new_expiry)
-            .bind(lease_token)
-            .fetch_optional(&mut *tx).await?;
+            "#,
+        )
+        .bind(intent_id)
+        .bind(now)
+        .bind(new_expiry)
+        .bind(lease_token)
+        .fetch_optional(&mut *tx)
+        .await?;
 
         let Some(row) = row else {
             return Err(PersistenceError::LeaseNotHeld(intent_id));
@@ -214,8 +208,9 @@ impl PostgresPersistence {
                 "renewed_at": now,
                 "lease_expires_at": new_expiry,
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         tx.commit().await?;
 
@@ -235,13 +230,12 @@ impl PostgresPersistence {
         lease_token: Uuid,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError> {
         let mut tx = self.pool().begin().await?;
 
-        let updated = sqlx
-            ::query(
-                r#"
+        let updated = sqlx::query(
+            r#"
             UPDATE payment_intents
             SET
                 state = 'queued',
@@ -254,14 +248,15 @@ impl PostgresPersistence {
                 id = $1
                 AND state = 'leased'
                 AND lease_token = $2
-            "#
-            )
-            .bind(intent_id)
-            .bind(lease_token)
-            .bind(now)
-            .bind(available_at)
-            .execute(&mut *tx).await?
-            .rows_affected();
+            "#,
+        )
+        .bind(intent_id)
+        .bind(lease_token)
+        .bind(now)
+        .bind(available_at)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
 
         if updated == 0 {
             return Err(PersistenceError::LeaseNotHeld(intent_id));
@@ -275,8 +270,9 @@ impl PostgresPersistence {
                 "state": "queued",
                 "note": note.clone().unwrap_or_else(|| "lease released back to queue".to_string()),
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         insert_audit_event_tx(
             &mut tx,
@@ -288,8 +284,9 @@ impl PostgresPersistence {
                 "available_at": available_at,
                 "reason": note,
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         tx.commit().await?;
         self.get_intent_by_id(intent_id).await
@@ -301,13 +298,12 @@ impl PostgresPersistence {
         lease_token: Uuid,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError> {
         let mut tx = self.pool().begin().await?;
 
-        let updated = sqlx
-            ::query(
-                r#"
+        let updated = sqlx::query(
+            r#"
             UPDATE payment_intents
             SET
                 state = 'retry_scheduled',
@@ -320,14 +316,15 @@ impl PostgresPersistence {
                 id = $1
                 AND state = 'leased'
                 AND lease_token = $2
-            "#
-            )
-            .bind(intent_id)
-            .bind(lease_token)
-            .bind(now)
-            .bind(available_at)
-            .execute(&mut *tx).await?
-            .rows_affected();
+            "#,
+        )
+        .bind(intent_id)
+        .bind(lease_token)
+        .bind(now)
+        .bind(available_at)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
 
         if updated == 0 {
             return Err(PersistenceError::LeaseNotHeld(intent_id));
@@ -341,8 +338,9 @@ impl PostgresPersistence {
                 "state": "retry_scheduled",
                 "note": note.clone().unwrap_or_else(|| "retry scheduled from lease".to_string()),
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         insert_audit_event_tx(
             &mut tx,
@@ -354,8 +352,9 @@ impl PostgresPersistence {
                 "available_at": available_at,
                 "reason": note,
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         tx.commit().await?;
         self.get_intent_by_id(intent_id).await
@@ -366,13 +365,12 @@ impl PostgresPersistence {
         intent_id: IntentId,
         lease_token: Uuid,
         now: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError> {
         let mut tx = self.pool().begin().await?;
 
-        let updated = sqlx
-            ::query(
-                r#"
+        let updated = sqlx::query(
+            r#"
             UPDATE payment_intents
             SET
                 state = 'executing',
@@ -384,13 +382,14 @@ impl PostgresPersistence {
                 id = $1
                 AND state = 'leased'
                 AND lease_token = $2
-            "#
-            )
-            .bind(intent_id)
-            .bind(lease_token)
-            .bind(now)
-            .execute(&mut *tx).await?
-            .rows_affected();
+            "#,
+        )
+        .bind(intent_id)
+        .bind(lease_token)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
 
         if updated == 0 {
             return Err(PersistenceError::LeaseNotHeld(intent_id));
@@ -404,8 +403,9 @@ impl PostgresPersistence {
                 "state": "executing",
                 "note": note.clone().unwrap_or_else(|| "lease consumed by execution".to_string()),
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         insert_audit_event_tx(
             &mut tx,
@@ -416,8 +416,9 @@ impl PostgresPersistence {
                 "claimed_at": now,
                 "reason": note,
             }),
-            now
-        ).await?;
+            now,
+        )
+        .await?;
 
         tx.commit().await?;
         self.get_intent_by_id(intent_id).await
@@ -429,20 +430,20 @@ async fn insert_audit_event_tx(
     intent_id: Option<IntentId>,
     event_type: &str,
     payload: Value,
-    created_at: DateTime<Utc>
+    created_at: DateTime<Utc>,
 ) -> Result<(), PersistenceError> {
-    sqlx
-        ::query(
-            r#"
+    sqlx::query(
+        r#"
         INSERT INTO audit_events (intent_id, event_type, payload, created_at)
         VALUES ($1,$2,$3,$4)
-        "#
-        )
-        .bind(intent_id)
-        .bind(event_type)
-        .bind(sqlx::types::Json(payload))
-        .bind(created_at)
-        .execute(&mut **tx).await?;
+        "#,
+    )
+    .bind(intent_id)
+    .bind(event_type)
+    .bind(sqlx::types::Json(payload))
+    .bind(created_at)
+    .execute(&mut **tx)
+    .await?;
 
     Ok(())
 }

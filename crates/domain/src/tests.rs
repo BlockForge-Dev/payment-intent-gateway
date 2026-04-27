@@ -3,24 +3,14 @@ mod tests {
     use chrono::Utc;
 
     use crate::{
-        AttemptOutcome,
-        EvidenceSource,
-        FailureClassification,
-        IntentState,
-        PaymentIntent,
+        AttemptOutcome, EvidenceSource, FailureClassification, IntentState, PaymentIntent,
     };
 
     #[test]
     fn new_intent_starts_in_received_state() {
         let now = Utc::now();
-        let intent = PaymentIntent::new(
-            "order_123",
-            "idem_123",
-            5000,
-            "NGN",
-            "paystack",
-            now
-        ).unwrap();
+        let intent =
+            PaymentIntent::new("order_123", "idem_123", 5000, "NGN", "paystack", now).unwrap();
 
         assert_eq!(intent.state, IntentState::Received);
         assert_eq!(intent.timeline.len(), 1);
@@ -29,14 +19,8 @@ mod tests {
     #[test]
     fn invalid_transition_is_rejected() {
         let now = Utc::now();
-        let mut intent = PaymentIntent::new(
-            "order_123",
-            "idem_123",
-            5000,
-            "NGN",
-            "paystack",
-            now
-        ).unwrap();
+        let mut intent =
+            PaymentIntent::new("order_123", "idem_123", 5000, "NGN", "paystack", now).unwrap();
 
         let result = intent.queue(now);
         assert!(result.is_err());
@@ -45,14 +29,8 @@ mod tests {
     #[test]
     fn normal_happy_path_works() {
         let now = Utc::now();
-        let mut intent = PaymentIntent::new(
-            "order_123",
-            "idem_123",
-            5000,
-            "NGN",
-            "paystack",
-            now
-        ).unwrap();
+        let mut intent =
+            PaymentIntent::new("order_123", "idem_123", 5000, "NGN", "paystack", now).unwrap();
 
         intent.validate(now).unwrap();
         intent.queue(now).unwrap();
@@ -64,7 +42,7 @@ mod tests {
                 now,
                 AttemptOutcome::Succeeded,
                 Some("prov_123".into()),
-                Some("provider confirmed success".into())
+                Some("provider confirmed success".into()),
             )
             .unwrap();
 
@@ -75,14 +53,8 @@ mod tests {
     #[test]
     fn terminal_state_cannot_be_retried() {
         let now = Utc::now();
-        let mut intent = PaymentIntent::new(
-            "order_456",
-            "idem_456",
-            7000,
-            "NGN",
-            "paystack",
-            now
-        ).unwrap();
+        let mut intent =
+            PaymentIntent::new("order_456", "idem_456", 7000, "NGN", "paystack", now).unwrap();
 
         intent.validate(now).unwrap();
         intent.queue(now).unwrap();
@@ -97,7 +69,7 @@ mod tests {
                     reason: "insufficient funds".into(),
                 },
                 Some("prov_456".into()),
-                Some("provider rejected request".into())
+                Some("provider rejected request".into()),
             )
             .unwrap();
 
@@ -108,14 +80,8 @@ mod tests {
     #[test]
     fn unknown_outcome_requires_real_evidence_to_resolve() {
         let now = Utc::now();
-        let mut intent = PaymentIntent::new(
-            "order_789",
-            "idem_789",
-            9000,
-            "NGN",
-            "paystack",
-            now
-        ).unwrap();
+        let mut intent =
+            PaymentIntent::new("order_789", "idem_789", 9000, "NGN", "paystack", now).unwrap();
 
         intent.validate(now).unwrap();
         intent.queue(now).unwrap();
@@ -130,7 +96,7 @@ mod tests {
                     reason: "timeout after provider submit".into(),
                 },
                 Some("prov_789".into()),
-                Some("ambiguous outcome".into())
+                Some("ambiguous outcome".into()),
             )
             .unwrap();
 
@@ -138,7 +104,7 @@ mod tests {
             now,
             IntentState::Succeeded,
             EvidenceSource::InternalValidation,
-            Some("should not work".into())
+            Some("should not work".into()),
         );
 
         assert!(result.is_err());
@@ -147,14 +113,8 @@ mod tests {
     #[test]
     fn webhook_evidence_can_resolve_unknown_outcome() {
         let now = Utc::now();
-        let mut intent = PaymentIntent::new(
-            "order_999",
-            "idem_999",
-            10000,
-            "NGN",
-            "paystack",
-            now
-        ).unwrap();
+        let mut intent =
+            PaymentIntent::new("order_999", "idem_999", 10000, "NGN", "paystack", now).unwrap();
 
         intent.validate(now).unwrap();
         intent.queue(now).unwrap();
@@ -169,7 +129,7 @@ mod tests {
                     reason: "timeout".into(),
                 },
                 Some("prov_999".into()),
-                Some("unknown".into())
+                Some("unknown".into()),
             )
             .unwrap();
 
@@ -180,7 +140,7 @@ mod tests {
                 EvidenceSource::ProviderWebhook {
                     event_id: "evt_1".into(),
                 },
-                Some("provider webhook confirmed success".into())
+                Some("provider webhook confirmed success".into()),
             )
             .unwrap();
 

@@ -1,6 +1,6 @@
 //This is the lifecycle
 
-use serde::{ Deserialize, Serialize };
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IntentState {
     Received,
@@ -22,7 +22,10 @@ pub enum IntentState {
 
 impl IntentState {
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Succeeded | Self::FailedTerminal | Self::DeadLettered)
+        matches!(
+            self,
+            Self::Succeeded | Self::FailedTerminal | Self::DeadLettered
+        )
     }
 
     pub fn can_retry(self) -> bool {
@@ -33,6 +36,17 @@ impl IntentState {
     }
 
     pub fn needs_reconciliation(self) -> bool {
-        matches!(self, Self::UnknownOutcome | Self::ProviderPending | Self::ManualReview)
+        matches!(self, Self::UnknownOutcome | Self::ProviderPending)
+    }
+
+    pub fn can_begin_reconciliation(self) -> bool {
+        matches!(
+            self,
+            Self::UnknownOutcome
+                | Self::ProviderPending
+                | Self::ManualReview
+                | Self::Succeeded
+                | Self::FailedTerminal
+        )
     }
 }

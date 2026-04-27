@@ -1,1 +1,7 @@
 /target
+.env/
+node_modules/
+.next/
+demo-output/
+
+.env

@@ -1,15 +1,17 @@
-use application::{ CreatePaymentIntentCommand, CreatePaymentIntentResult };
+use application::{
+    CreatePaymentIntentCommand, CreatePaymentIntentResult, OperatorIntentList, OperatorReceipt,
+};
 use axum::{
-    extract::{ Path, State },
-    http::{ header::AUTHORIZATION, HeaderMap, StatusCode },
+    extract::{Path, Query, State},
+    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
     Json,
 };
 use chrono::Utc;
-use domain::{ FailureClassification, IntentState, PaymentIntent };
-use serde::{ Deserialize, Serialize };
+use domain::{FailureClassification, IntentState, PaymentIntent};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{ app_state::AppState, error::ApiError };
+use crate::{app_state::AppState, error::ApiError};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +20,7 @@ pub struct CreatePaymentIntentRequest {
     pub amount_minor: i64,
     pub currency: String,
     pub provider: String,
+    pub callback_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -27,6 +30,7 @@ pub struct PaymentIntentResponse {
     pub amount_minor: i64,
     pub currency: String,
     pub provider: String,
+    pub callback_url: Option<String>,
     pub state: String,
     pub provider_reference: Option<String>,
     pub latest_failure_classification: Option<String>,
@@ -36,10 +40,25 @@ pub struct PaymentIntentResponse {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ListPaymentIntentsQuery {
+    pub limit: Option<u32>,
+}
+
+pub async fn list_payment_intents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListPaymentIntentsQuery>,
+) -> Result<Json<OperatorIntentList>, ApiError> {
+    authenticate(&headers, &state.api_bearer_token)?;
+    let intents = state.service.list_operator_intents(query.limit).await?;
+    Ok(Json(intents))
+}
+
 pub async fn create_payment_intent(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<CreatePaymentIntentRequest>
+    Json(body): Json<CreatePaymentIntentRequest>,
 ) -> Result<(StatusCode, Json<PaymentIntentResponse>), ApiError> {
     authenticate(&headers, &state.api_bearer_token)?;
     let idempotency_key = extract_idempotency_key(&headers)?;
@@ -49,6 +68,7 @@ pub async fn create_payment_intent(
         amount_minor: body.amount_minor,
         currency: body.currency,
         provider: body.provider,
+        callback_url: body.callback_url,
         idempotency_key,
         received_at: Utc::now(),
     };
@@ -56,21 +76,33 @@ pub async fn create_payment_intent(
     let result = state.service.create_intent(command).await?;
 
     match result {
-        CreatePaymentIntentResult::Created(intent) =>
-            Ok((StatusCode::CREATED, Json(to_response(intent, "created")))),
-        CreatePaymentIntentResult::Existing(intent) =>
-            Ok((StatusCode::OK, Json(to_response(intent, "existing")))),
+        CreatePaymentIntentResult::Created(intent) => {
+            Ok((StatusCode::CREATED, Json(to_response(intent, "created"))))
+        }
+        CreatePaymentIntentResult::Existing(intent) => {
+            Ok((StatusCode::OK, Json(to_response(intent, "existing"))))
+        }
     }
 }
 
 pub async fn get_payment_intent(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>
+    Path(id): Path<Uuid>,
 ) -> Result<Json<PaymentIntentResponse>, ApiError> {
     authenticate(&headers, &state.api_bearer_token)?;
     let intent = state.service.get_intent(id).await?;
     Ok(Json(to_response(intent, "queried")))
+}
+
+pub async fn get_payment_intent_receipt(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<OperatorReceipt>, ApiError> {
+    authenticate(&headers, &state.api_bearer_token)?;
+    let receipt = state.service.get_receipt(id).await?;
+    Ok(Json(receipt))
 }
 
 fn to_response(intent: PaymentIntent, idempotency_status: &str) -> PaymentIntentResponse {
@@ -80,9 +112,12 @@ fn to_response(intent: PaymentIntent, idempotency_status: &str) -> PaymentIntent
         amount_minor: intent.money.amount_minor,
         currency: intent.money.currency,
         provider: intent.provider.0,
+        callback_url: intent.callback_url,
         state: intent_state_to_api(intent.state).to_string(),
         provider_reference: intent.provider_reference.map(|p| p.0),
-        latest_failure_classification: intent.latest_failure.map(|f| failure_to_api(&f).to_string()),
+        latest_failure_classification: intent
+            .latest_failure
+            .map(|f| failure_to_api(&f).to_string()),
         idempotency_status: idempotency_status.to_string(),
         receipt_url: format!("/payment-intents/{}/receipt", intent.id),
         created_at: intent.created_at,

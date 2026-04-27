@@ -1,24 +1,11 @@
-use chrono::{ DateTime, Utc };
-use serde::{ Deserialize, Serialize };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    AttemptOutcome,
-    DomainError,
-    EvidenceSource,
-    ExecutionAttempt,
-    FailureClassification,
-    IdempotencyKey,
-    IntentId,
-    IntentState,
-    MerchantReference,
-    Money,
-    PaymentReceipt,
-    ProviderName,
-    ProviderReference,
-    ReceiptTimelineEntry,
-    ReconDecision,
-    ReconResult,
+    AttemptOutcome, DomainError, EvidenceSource, ExecutionAttempt, FailureClassification,
+    IdempotencyKey, IntentId, IntentState, MerchantReference, Money, PaymentReceipt, ProviderName,
+    ProviderReference, ReceiptTimelineEntry, ReconDecision, ReconResult,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,12 +15,16 @@ pub struct PaymentIntent {
     pub idempotency_key: IdempotencyKey,
     pub money: Money,
     pub provider: ProviderName,
+    pub callback_url: Option<String>,
     pub provider_reference: Option<ProviderReference>,
     pub state: IntentState,
     pub latest_failure: Option<FailureClassification>,
     pub attempts: Vec<ExecutionAttempt>,
     pub reconciliation: Option<ReconResult>,
     pub timeline: Vec<ReceiptTimelineEntry>,
+    pub next_resolution_at: Option<DateTime<Utc>>,
+    pub last_resolution_at: Option<DateTime<Utc>>,
+    pub resolution_attempt_count: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -45,7 +36,7 @@ impl PaymentIntent {
         amount_minor: i64,
         currency: impl Into<String>,
         provider: impl Into<String>,
-        now: DateTime<Utc>
+        now: DateTime<Utc>,
     ) -> Result<Self, DomainError> {
         let merchant_reference = merchant_reference.into();
         let idempotency_key = idempotency_key.into();
@@ -74,6 +65,7 @@ impl PaymentIntent {
             idempotency_key: IdempotencyKey(idempotency_key),
             money: Money::new(amount_minor, currency),
             provider: ProviderName(provider),
+            callback_url: None,
             provider_reference: None,
             state: IntentState::Received,
             latest_failure: None,
@@ -84,6 +76,9 @@ impl PaymentIntent {
                 at: now,
                 note: Some("intent durably accepted into the system".to_string()),
             }],
+            next_resolution_at: None,
+            last_resolution_at: None,
+            resolution_attempt_count: 0,
             created_at: now,
             updated_at: now,
         })
@@ -93,17 +88,31 @@ impl PaymentIntent {
         self.transition_to(IntentState::Validated, now, Some("intent validated".into()))
     }
 
+    pub fn with_callback_url(mut self, callback_url: Option<String>) -> Self {
+        self.callback_url = callback_url;
+        self
+    }
+
     pub fn reject(&mut self, now: DateTime<Utc>, reason: String) -> Result<(), DomainError> {
         self.latest_failure = Some(FailureClassification::Validation);
+        self.clear_resolution_schedule(now);
         self.transition_to(IntentState::Rejected, now, Some(reason))
     }
 
     pub fn queue(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
-        self.transition_to(IntentState::Queued, now, Some("intent queued for execution".into()))
+        self.transition_to(
+            IntentState::Queued,
+            now,
+            Some("intent queued for execution".into()),
+        )
     }
 
     pub fn lease(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
-        self.transition_to(IntentState::Leased, now, Some("worker lease acquired".into()))
+        self.transition_to(
+            IntentState::Leased,
+            now,
+            Some("worker lease acquired".into()),
+        )
     }
 
     pub fn begin_execution(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
@@ -114,10 +123,17 @@ impl PaymentIntent {
             });
         }
 
-        self.transition_to(IntentState::Executing, now, Some("execution attempt started".into()))?;
+        self.reset_resolution_tracking(now);
+
+        self.transition_to(
+            IntentState::Executing,
+            now,
+            Some("execution attempt started".into()),
+        )?;
 
         let next_attempt_no = (self.attempts.len() as u32) + 1;
-        self.attempts.push(ExecutionAttempt::started(next_attempt_no, now));
+        self.attempts
+            .push(ExecutionAttempt::started(next_attempt_no, now));
         Ok(())
     }
 
@@ -126,9 +142,12 @@ impl PaymentIntent {
         now: DateTime<Utc>,
         outcome: AttemptOutcome,
         provider_reference: Option<String>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<(), DomainError> {
-        let last = self.attempts.pop().ok_or(DomainError::InvalidAttemptNumber)?;
+        let last = self
+            .attempts
+            .pop()
+            .ok_or(DomainError::InvalidAttemptNumber)?;
 
         let provider_reference = provider_reference.map(ProviderReference);
 
@@ -136,7 +155,7 @@ impl PaymentIntent {
             now,
             outcome.clone(),
             provider_reference.clone(),
-            note.clone()
+            note.clone(),
         );
         self.attempts.push(updated_attempt);
 
@@ -147,22 +166,27 @@ impl PaymentIntent {
         match outcome {
             AttemptOutcome::Succeeded => {
                 self.latest_failure = None;
+                self.clear_resolution_schedule(now);
                 self.transition_to(IntentState::Succeeded, now, note)?;
             }
             AttemptOutcome::RetryableFailure { classification, .. } => {
                 self.latest_failure = Some(classification);
+                self.clear_resolution_schedule(now);
                 self.transition_to(IntentState::RetryScheduled, now, note)?;
             }
             AttemptOutcome::TerminalFailure { classification, .. } => {
                 self.latest_failure = Some(classification);
+                self.clear_resolution_schedule(now);
                 self.transition_to(IntentState::FailedTerminal, now, note)?;
             }
             AttemptOutcome::ProviderPending => {
                 self.latest_failure = None;
+                self.clear_resolution_schedule(now);
                 self.transition_to(IntentState::ProviderPending, now, note)?;
             }
             AttemptOutcome::UnknownOutcome { classification, .. } => {
                 self.latest_failure = Some(classification);
+                self.clear_resolution_schedule(now);
                 self.transition_to(IntentState::UnknownOutcome, now, note)?;
             }
         }
@@ -182,56 +206,77 @@ impl PaymentIntent {
             });
         }
 
+        self.clear_resolution_schedule(now);
         self.transition_to(IntentState::Queued, now, Some("retry re-queued".into()))
     }
 
     pub fn begin_reconciliation(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
-        if !self.state.needs_reconciliation() {
+        if !self.state.can_begin_reconciliation() {
             return Err(DomainError::InvalidStateTransition {
                 from: self.state,
                 to: IntentState::Reconciling,
             });
         }
 
-        self.transition_to(IntentState::Reconciling, now, Some("reconciliation started".into()))
+        self.clear_resolution_schedule(now);
+        self.transition_to(
+            IntentState::Reconciling,
+            now,
+            Some("reconciliation started".into()),
+        )
     }
 
     pub fn apply_reconciliation(
         &mut self,
         result: ReconResult,
-        now: DateTime<Utc>
+        now: DateTime<Utc>,
     ) -> Result<(), DomainError> {
         self.reconciliation = Some(result.clone());
 
         match result.decision {
             ReconDecision::ConfirmSucceeded => {
                 self.latest_failure = None;
+                self.clear_resolution_schedule(now);
                 self.transition_to(
                     IntentState::Reconciled,
                     now,
-                    Some("reconciliation confirmed success".into())
+                    Some("reconciliation confirmed success".into()),
                 )?;
             }
             ReconDecision::ConfirmFailedTerminal => {
                 self.latest_failure = Some(FailureClassification::TerminalProvider);
+                self.clear_resolution_schedule(now);
                 self.transition_to(
                     IntentState::Reconciled,
                     now,
-                    Some("reconciliation confirmed terminal failure".into())
+                    Some("reconciliation confirmed terminal failure".into()),
                 )?;
             }
             ReconDecision::KeepUnknown => {
-                self.transition_to(
-                    IntentState::UnknownOutcome,
-                    now,
-                    Some("reconciliation kept state as unknown".into())
-                )?;
+                if result.provider_state.eq_ignore_ascii_case("pending") {
+                    self.latest_failure = None;
+                    self.transition_to(
+                        IntentState::ProviderPending,
+                        now,
+                        Some("reconciliation kept provider-side state as pending".into()),
+                    )?;
+                } else {
+                    self.transition_to(
+                        IntentState::UnknownOutcome,
+                        now,
+                        Some("reconciliation kept state as unknown".into()),
+                    )?;
+                }
             }
             ReconDecision::EscalateManualReview => {
+                if result.comparison == crate::ReconComparison::Mismatch {
+                    self.latest_failure = Some(FailureClassification::ReconciliationMismatch);
+                }
+                self.clear_resolution_schedule(now);
                 self.transition_to(
                     IntentState::ManualReview,
                     now,
-                    Some("reconciliation escalated to manual review".into())
+                    Some("reconciliation escalated to manual review".into()),
                 )?;
             }
         }
@@ -244,18 +289,17 @@ impl PaymentIntent {
         now: DateTime<Utc>,
         to_state: IntentState,
         evidence: EvidenceSource,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<(), DomainError> {
-        if
-            self.state != IntentState::UnknownOutcome &&
-            self.state != IntentState::ProviderPending &&
-            self.state != IntentState::Reconciling
+        if self.state != IntentState::UnknownOutcome
+            && self.state != IntentState::ProviderPending
+            && self.state != IntentState::Reconciling
         {
             return Err(DomainError::EvidenceRequiredForUnknownResolution);
         }
 
         match evidence {
-            | EvidenceSource::ProviderWebhook { .. }
+            EvidenceSource::ProviderWebhook { .. }
             | EvidenceSource::ProviderStatusCheck { .. }
             | EvidenceSource::ManualOperatorDecision { .. } => {}
             EvidenceSource::InternalValidation => {
@@ -264,15 +308,58 @@ impl PaymentIntent {
         }
 
         match to_state {
-            IntentState::Succeeded | IntentState::FailedTerminal | IntentState::ManualReview => {
+            IntentState::ProviderPending => {
+                self.latest_failure = None;
+                self.clear_resolution_schedule(now);
                 self.transition_to(to_state, now, note)
             }
-            _ =>
-                Err(DomainError::InvalidStateTransition {
-                    from: self.state,
-                    to: to_state,
-                }),
+            IntentState::Succeeded => {
+                self.latest_failure = None;
+                self.clear_resolution_schedule(now);
+                self.transition_to(to_state, now, note)
+            }
+            IntentState::FailedTerminal => {
+                self.latest_failure = Some(FailureClassification::TerminalProvider);
+                self.clear_resolution_schedule(now);
+                self.transition_to(to_state, now, note)
+            }
+            IntentState::ManualReview => {
+                self.clear_resolution_schedule(now);
+                self.transition_to(to_state, now, note)
+            }
+            _ => Err(DomainError::InvalidStateTransition {
+                from: self.state,
+                to: to_state,
+            }),
         }
+    }
+
+    pub fn schedule_status_check(
+        &mut self,
+        now: DateTime<Utc>,
+        next_at: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        if self.state != IntentState::UnknownOutcome && self.state != IntentState::ProviderPending {
+            return Err(DomainError::StatusCheckNotAllowed(self.state));
+        }
+
+        self.next_resolution_at = Some(next_at);
+        self.updated_at = now;
+        Ok(())
+    }
+
+    pub fn record_status_check_attempt(
+        &mut self,
+        checked_at: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        if self.state != IntentState::UnknownOutcome && self.state != IntentState::ProviderPending {
+            return Err(DomainError::StatusCheckNotAllowed(self.state));
+        }
+
+        self.last_resolution_at = Some(checked_at);
+        self.resolution_attempt_count += 1;
+        self.updated_at = checked_at;
+        Ok(())
     }
 
     pub fn record_callback_delivery_failure(&self) -> Result<(), DomainError> {
@@ -286,20 +373,36 @@ impl PaymentIntent {
             idempotency_key: self.idempotency_key.clone(),
             money: self.money.clone(),
             provider: self.provider.clone(),
+            callback_url: self.callback_url.clone(),
             provider_reference: self.provider_reference.clone(),
             current_state: self.state,
             latest_failure: self.latest_failure.clone(),
             timeline: self.timeline.clone(),
             attempts: self.attempts.clone(),
             reconciliation: self.reconciliation.clone(),
+            next_resolution_at: self.next_resolution_at,
+            last_resolution_at: self.last_resolution_at,
+            resolution_attempt_count: self.resolution_attempt_count,
         }
+    }
+
+    fn clear_resolution_schedule(&mut self, now: DateTime<Utc>) {
+        self.next_resolution_at = None;
+        self.updated_at = now;
+    }
+
+    fn reset_resolution_tracking(&mut self, now: DateTime<Utc>) {
+        self.next_resolution_at = None;
+        self.last_resolution_at = None;
+        self.resolution_attempt_count = 0;
+        self.updated_at = now;
     }
 
     fn transition_to(
         &mut self,
         to: IntentState,
         now: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<(), DomainError> {
         if !Self::is_valid_transition(self.state, to) {
             return Err(DomainError::InvalidStateTransition {
@@ -310,7 +413,11 @@ impl PaymentIntent {
 
         self.state = to;
         self.updated_at = now;
-        self.timeline.push(ReceiptTimelineEntry { state: to, at: now, note });
+        self.timeline.push(ReceiptTimelineEntry {
+            state: to,
+            at: now,
+            note,
+        });
         Ok(())
     }
 
@@ -343,17 +450,24 @@ impl PaymentIntent {
             (ProviderPending, ManualReview) => true,
 
             (UnknownOutcome, Reconciling) => true,
+            (UnknownOutcome, ProviderPending) => true,
             (UnknownOutcome, Succeeded) => true,
             (UnknownOutcome, FailedTerminal) => true,
             (UnknownOutcome, ManualReview) => true,
 
+            (ManualReview, Reconciling) => true,
+
+            (Succeeded, Reconciling) => true,
+
+            (FailedTerminal, Reconciling) => true,
+
             (Reconciling, Reconciled) => true,
+            (Reconciling, ProviderPending) => true,
             (Reconciling, UnknownOutcome) => true,
             (Reconciling, ManualReview) => true,
             (Reconciling, Succeeded) => true,
             (Reconciling, FailedTerminal) => true,
 
-            // optional escalation paths
             (_, DeadLettered) if !from.is_terminal() => true,
 
             _ => false,

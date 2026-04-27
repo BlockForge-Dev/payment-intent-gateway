@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{ DateTime, Utc };
-use domain::{ IntentId, PaymentIntent };
-use persistence::{ LeasedPaymentIntent, PostgresPersistence, PersistenceError };
+use chrono::{DateTime, Utc};
+use domain::{IntentId, PaymentIntent};
+use persistence::{LeasedPaymentIntent, PersistenceError, PostgresPersistence};
 use uuid::Uuid;
 
 use crate::ApplicationError;
@@ -14,7 +14,7 @@ pub trait WorkerLeaseRepo: Clone + Send + Sync + 'static {
         &self,
         worker_id: &str,
         now: DateTime<Utc>,
-        lease_for: Duration
+        lease_for: Duration,
     ) -> Result<Option<LeasedPaymentIntent>, PersistenceError>;
 
     async fn renew_lease(
@@ -22,7 +22,7 @@ pub trait WorkerLeaseRepo: Clone + Send + Sync + 'static {
         intent_id: IntentId,
         lease_token: Uuid,
         now: DateTime<Utc>,
-        lease_for: Duration
+        lease_for: Duration,
     ) -> Result<LeasedPaymentIntent, PersistenceError>;
 
     async fn return_lease_to_queue(
@@ -31,7 +31,7 @@ pub trait WorkerLeaseRepo: Clone + Send + Sync + 'static {
         lease_token: Uuid,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError>;
 
     async fn schedule_retry_from_lease(
@@ -40,7 +40,7 @@ pub trait WorkerLeaseRepo: Clone + Send + Sync + 'static {
         lease_token: Uuid,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError>;
 
     async fn mark_leased_as_executing(
@@ -48,7 +48,7 @@ pub trait WorkerLeaseRepo: Clone + Send + Sync + 'static {
         intent_id: IntentId,
         lease_token: Uuid,
         now: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError>;
 }
 
@@ -58,7 +58,7 @@ impl WorkerLeaseRepo for PostgresPersistence {
         &self,
         worker_id: &str,
         now: DateTime<Utc>,
-        lease_for: Duration
+        lease_for: Duration,
     ) -> Result<Option<LeasedPaymentIntent>, PersistenceError> {
         PostgresPersistence::lease_next_available_intent(self, worker_id, now, lease_for).await
     }
@@ -68,7 +68,7 @@ impl WorkerLeaseRepo for PostgresPersistence {
         intent_id: IntentId,
         lease_token: Uuid,
         now: DateTime<Utc>,
-        lease_for: Duration
+        lease_for: Duration,
     ) -> Result<LeasedPaymentIntent, PersistenceError> {
         PostgresPersistence::renew_lease(self, intent_id, lease_token, now, lease_for).await
     }
@@ -79,7 +79,7 @@ impl WorkerLeaseRepo for PostgresPersistence {
         lease_token: Uuid,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError> {
         PostgresPersistence::return_lease_to_queue(
             self,
@@ -87,8 +87,9 @@ impl WorkerLeaseRepo for PostgresPersistence {
             lease_token,
             now,
             available_at,
-            note
-        ).await
+            note,
+        )
+        .await
     }
 
     async fn schedule_retry_from_lease(
@@ -97,7 +98,7 @@ impl WorkerLeaseRepo for PostgresPersistence {
         lease_token: Uuid,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError> {
         PostgresPersistence::schedule_retry_from_lease(
             self,
@@ -105,8 +106,9 @@ impl WorkerLeaseRepo for PostgresPersistence {
             lease_token,
             now,
             available_at,
-            note
-        ).await
+            note,
+        )
+        .await
     }
 
     async fn mark_leased_as_executing(
@@ -114,20 +116,26 @@ impl WorkerLeaseRepo for PostgresPersistence {
         intent_id: IntentId,
         lease_token: Uuid,
         now: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, PersistenceError> {
         PostgresPersistence::mark_leased_as_executing(self, intent_id, lease_token, now, note).await
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkerLeaseService<R> where R: WorkerLeaseRepo {
+pub struct WorkerLeaseService<R>
+where
+    R: WorkerLeaseRepo,
+{
     repo: R,
     worker_id: String,
     lease_for: Duration,
 }
 
-impl<R> WorkerLeaseService<R> where R: WorkerLeaseRepo {
+impl<R> WorkerLeaseService<R>
+where
+    R: WorkerLeaseRepo,
+{
     pub fn new(repo: R, worker_id: impl Into<String>, lease_for: Duration) -> Self {
         Self {
             repo,
@@ -138,20 +146,22 @@ impl<R> WorkerLeaseService<R> where R: WorkerLeaseRepo {
 
     pub async fn poll_once(
         &self,
-        now: DateTime<Utc>
+        now: DateTime<Utc>,
     ) -> Result<Option<LeasedPaymentIntent>, ApplicationError> {
         self.repo
-            .lease_next_available_intent(&self.worker_id, now, self.lease_for).await
+            .lease_next_available_intent(&self.worker_id, now, self.lease_for)
+            .await
             .map_err(Into::into)
     }
 
     pub async fn renew(
         &self,
         leased: &LeasedPaymentIntent,
-        now: DateTime<Utc>
+        now: DateTime<Utc>,
     ) -> Result<LeasedPaymentIntent, ApplicationError> {
         self.repo
-            .renew_lease(leased.intent.id, leased.lease_token, now, self.lease_for).await
+            .renew_lease(leased.intent.id, leased.lease_token, now, self.lease_for)
+            .await
             .map_err(Into::into)
     }
 
@@ -160,7 +170,7 @@ impl<R> WorkerLeaseService<R> where R: WorkerLeaseRepo {
         leased: &LeasedPaymentIntent,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, ApplicationError> {
         self.repo
             .return_lease_to_queue(
@@ -168,8 +178,9 @@ impl<R> WorkerLeaseService<R> where R: WorkerLeaseRepo {
                 leased.lease_token,
                 now,
                 available_at,
-                note
-            ).await
+                note,
+            )
+            .await
             .map_err(Into::into)
     }
 
@@ -178,7 +189,7 @@ impl<R> WorkerLeaseService<R> where R: WorkerLeaseRepo {
         leased: &LeasedPaymentIntent,
         now: DateTime<Utc>,
         available_at: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, ApplicationError> {
         self.repo
             .schedule_retry_from_lease(
@@ -186,8 +197,9 @@ impl<R> WorkerLeaseService<R> where R: WorkerLeaseRepo {
                 leased.lease_token,
                 now,
                 available_at,
-                note
-            ).await
+                note,
+            )
+            .await
             .map_err(Into::into)
     }
 
@@ -195,10 +207,11 @@ impl<R> WorkerLeaseService<R> where R: WorkerLeaseRepo {
         &self,
         leased: &LeasedPaymentIntent,
         now: DateTime<Utc>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Result<PaymentIntent, ApplicationError> {
         self.repo
-            .mark_leased_as_executing(leased.intent.id, leased.lease_token, now, note).await
+            .mark_leased_as_executing(leased.intent.id, leased.lease_token, now, note)
+            .await
             .map_err(Into::into)
     }
 }

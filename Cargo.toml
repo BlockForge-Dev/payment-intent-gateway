@@ -26,6 +26,11 @@ members = [
     "crates/application",
     "apps/api", 
     "apps/worker",
+    "apps/mock-provider",
+    "apps/resolver",
+    "apps/callback-worker",
+    "apps/reconciler",
+    "apps/demo-receiver",
 
 ]
 resolver = "2"

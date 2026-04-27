@@ -1,7 +1,7 @@
-use chrono::{ DateTime, Utc };
-use serde::{ Deserialize, Serialize };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
-use crate::{ AttemptNumber, AttemptOutcome, ProviderReference };
+use crate::{AttemptNumber, AttemptOutcome, ProviderReference};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionAttempt {
@@ -30,7 +30,7 @@ impl ExecutionAttempt {
         ended_at: DateTime<Utc>,
         outcome: AttemptOutcome,
         provider_reference: Option<ProviderReference>,
-        note: Option<String>
+        note: Option<String>,
     ) -> Self {
         self.ended_at = Some(ended_at);
         self.outcome = Some(outcome);

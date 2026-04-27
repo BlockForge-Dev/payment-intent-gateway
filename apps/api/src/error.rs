@@ -1,5 +1,9 @@
 use application::ApplicationError;
-use axum::{ http::StatusCode, response::{ IntoResponse, Response }, Json };
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde::Serialize;
 
 #[derive(Debug)]
@@ -37,9 +41,9 @@ impl From<ApplicationError> for ApiError {
             ApplicationError::UnsupportedProvider(provider) => {
                 Self::BadRequest(format!("unsupported provider: {provider}"))
             }
-            ApplicationError::IdempotencyConflict { scope, key } => {
-                Self::Conflict(format!("idempotency key conflict for scope={scope} key={key}"))
-            }
+            ApplicationError::IdempotencyConflict { scope, key } => Self::Conflict(format!(
+                "idempotency key conflict for scope={scope} key={key}"
+            )),
             ApplicationError::IntentNotFound(id) => {
                 Self::NotFound(format!("payment intent not found: {id}"))
             }

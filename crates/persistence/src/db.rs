@@ -6,5 +6,6 @@ pub async fn connect(database_url: &str, max_connections: u32) -> Result<PgPool,
     PgPoolOptions::new()
         .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(database_url).await
+        .connect(database_url)
+        .await
 }
