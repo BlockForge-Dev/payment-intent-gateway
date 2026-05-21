@@ -1,68 +1,109 @@
 # Payment Intent Gateway
 
-Reliability-first execution infrastructure for money-critical payment actions.
+Reliability-first payment execution infrastructure for money-critical actions.
 
-## North Star
+This project is a Rust-based gateway that accepts payment intents, preserves them durably, executes them safely through a provider boundary, handles ambiguity without guessing, and exposes operator-readable truth through receipts, timelines, callbacks, and reconciliation history.
 
-Safely execute payment intents while preserving truth under duplicates, retries, ambiguity, asynchronous confirmation, and external inconsistency.
+It is not a checkout app, wallet, or fintech super app.
 
-## What This Project Is
+It is a focused system for one hard problem:
 
-The Payment Intent Gateway is not a checkout UI, wallet, banking app, or merchant SaaS platform.
+**how to execute payment actions safely when reality gets messy.**
 
-It is a trust boundary between a business request and real provider execution.
+## Why This Project Exists
 
-Its job is to:
+Most systems can submit a payment request.
 
-- accept and durably persist payment intents
-- enforce idempotency
-- execute intents asynchronously through a provider adapter
-- classify success, terminal failure, retryable failure, pending, and unknown outcome correctly
-- preserve attempt history and operational evidence
-- ingest provider webhooks safely
-- deliver downstream callbacks without confusing notification truth with execution truth
-- reconcile internal truth against provider truth when outcomes are uncertain
-- expose operator-readable receipts and timelines
+Far fewer systems handle these questions well:
 
-## Current Implementation Status
+- Did the provider actually receive the request before the timeout?
+- Is it safe to retry, or could that duplicate money movement?
+- What happens if two workers race for the same intent?
+- What if the provider webhook arrives twice or out of order?
+- What if the payment succeeded but the downstream callback failed?
+- What if internal state and provider state no longer agree?
+- Can an operator inspect the full execution story later?
 
-The repo now contains a working vertical slice through the reliability story:
+This project is built around those questions.
 
-- `crates/domain`: payment intent aggregate, lifecycle states, attempts, reconciliation types, and invariants
-- `crates/application`: ingestion, execution, webhooks, callbacks, receipts, reconciliation, and operator-facing query services
-- `crates/persistence`: Postgres persistence, leasing, callback queueing, receipts, and evidence history
-- `apps/api`: payment intent API, receipt endpoint, and provider webhook ingestion
-- `apps/worker`: leased background execution worker
-- `apps/resolver`: unknown-outcome follow-up and status-check worker
-- `apps/reconciler`: selected-intent reconciliation runner
+## What It Demonstrates
+
+This repo is designed to make reliability engineering in payments visible.
+
+Core signals:
+
+- durable intent capture before execution
+- idempotent ingestion and replay safety
+- leased worker execution with recovery after failure
+- explicit classification of success, retryable failure, terminal failure, pending, and unknown outcome
+- provider webhook ingestion with deduplication and conservative state updates
+- downstream callback delivery with retry history, separate from execution truth
+- reconciliation that can resolve ambiguity or surface mismatch
+- operator-readable receipts that stitch attempts, evidence, callbacks, and reconciliation into one timeline
+
+## Current Status
+
+This is a serious working build, not just a foundation skeleton.
+
+Implemented through the current repo:
+
+- intent ingestion API
+- Postgres-backed durable persistence
+- worker leasing and execution coordination
+- controllable mock provider for failure-heavy scenarios
+- unknown-outcome follow-up and status checking
+- provider webhook ingestion
+- callback delivery engine
+- receipt and evidence model
+- reconciliation engine
+- minimal operator UI in Next.js + TypeScript
+- end-to-end demo scenario runner
+
+This is still a portfolio-grade infrastructure project, not a production rollout. The focus is correctness, explainability, and failure handling rather than full product polish or multi-provider commercial readiness.
+
+## Architecture At A Glance
+
+Main runtime surfaces:
+
+- `apps/api`: intent creation, query, receipt, and webhook endpoints
+- `apps/worker`: leased execution worker
+- `apps/resolver`: follow-up worker for unknown outcomes and pending states
 - `apps/callback-worker`: downstream callback delivery worker
-- `apps/mock-provider`: controllable failure-heavy provider simulator
-- `apps/demo-receiver`: controllable downstream callback target for demo scenarios
-- `apps/operator-ui`: Next.js + TypeScript operator surface for inspecting intents end to end
+- `apps/reconciler`: selected-intent reconciliation runner
+- `apps/mock-provider`: controllable provider simulator
+- `apps/demo-receiver`: controllable callback target for delivery-failure demos
+- `apps/operator-ui`: operator inspection surface
 
-## Implemented Milestones
+Core crates:
 
-The repo currently covers the following milestones:
+- `crates/domain`: payment intent aggregate, states, attempts, invariants, reconciliation types
+- `crates/application`: orchestration for ingestion, execution, webhooks, callbacks, receipts, and reconciliation
+- `crates/persistence`: Postgres repositories, leasing, callback queueing, evidence history, receipt assembly
 
-- Milestone 1: core domain model and invariants
-- Milestone 2: durable persistence layer
-- Milestone 3: replay-safe intent ingestion API
-- Milestone 4: queueing, leasing, and worker foundation
-- Milestone 5: failure-heavy mock provider simulator
-- Milestone 6: execution attempt logic and classification
-- Milestone 7: unknown outcome handling and follow-up
-- Milestone 8: provider webhook ingestion
-- Milestone 9: callback delivery engine
-- Milestone 10: receipt and evidence model
-- Milestone 11: reconciliation engine
-- Milestone 12: minimal operator surface
-- Milestone 13: failure scenario demo suite
+## What You Can Demo
 
-## Run The Stack
+The repo includes a live scenario suite that makes the reliability story concrete.
 
-The repo root placeholder binary is not the real app entrypoint. Run the actual services instead.
+Supported scenarios:
 
-Apply the SQL migrations first:
+- duplicate request with the same idempotency key
+- retryable provider outage
+- terminal provider rejection
+- timeout leading to unknown outcome
+- delayed webhook resolving unknown outcome
+- duplicate webhook event
+- callback delivery failure and retry
+- reconciliation mismatch
+- worker crash and recovery
+- stale pending intent requiring reconciliation
+
+Artifacts from each run are written to `demo-output/<scenario>-<timestamp>/`.
+
+Full walkthrough: [docs/demo-scenarios.md](docs/demo-scenarios.md)
+
+## Quick Start
+
+### 1. Apply migrations
 
 ```powershell
 $env:PGPASSWORD = 'your-postgres-password'
@@ -72,7 +113,9 @@ psql -h localhost -U postgres -d payment_gateway -v ON_ERROR_STOP=1 -f migeratio
 psql -h localhost -U postgres -d payment_gateway -v ON_ERROR_STOP=1 -f migerations/0004_add_callback_delivery_engine.sql
 ```
 
-Start the runtime services in separate terminals:
+### 2. Start the stack
+
+Run each in a separate terminal:
 
 ```powershell
 cargo run -p api
@@ -94,60 +137,33 @@ cargo run -p callback-worker
 cargo run -p mock-provider
 ```
 
-Optional:
+Optional but useful for demos:
 
 ```powershell
 cargo run -p demo-receiver
 ```
 
-```powershell
-cargo run -p reconciler
-```
-
-## Tests
-
-Run the full workspace test suite from the repo root:
+### 3. Run tests
 
 ```powershell
 cargo test --workspace
 ```
 
-The current workspace includes domain tests, ingestion tests, execution classification tests, webhook tests, callback delivery tests, reconciliation tests, receipt tests, and mock/demo app tests.
-
-## Demo Suite
-
-Milestone 13 includes a reproducible live demo suite with saved artifacts.
-
-Main runner:
+### 4. Run a demo scenario
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-demo-scenario.ps1 -Scenario <scenario_name> -ApiBearerToken <your-api-token>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-demo-scenario.ps1 -Scenario timeout_unknown_outcome -ApiBearerToken <your-api-token>
 ```
 
-Artifacts are written to:
+Or try the callback retry path:
 
-```text
-demo-output/<scenario>-<timestamp>/
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-demo-scenario.ps1 -Scenario callback_delivery_failure_and_retry -ApiBearerToken <your-api-token>
 ```
-
-Supported scenarios:
-
-- `duplicate_request_same_idempotency`
-- `retryable_provider_outage`
-- `terminal_provider_rejection`
-- `timeout_unknown_outcome`
-- `delayed_webhook_resolves_unknown`
-- `duplicate_webhook_event`
-- `callback_delivery_failure_and_retry`
-- `reconciliation_mismatch`
-- `worker_crash_and_recovery`
-- `stale_pending_requires_recon`
-
-See [docs/demo-scenarios.md](docs/demo-scenarios.md) for the full flow and expected outcomes.
 
 ## Operator UI
 
-The operator surface is a Next.js + TypeScript app in `apps/operator-ui`.
+The repo includes a minimal operator surface built with Next.js and TypeScript.
 
 Run it with:
 
@@ -159,10 +175,20 @@ npm install
 npm run dev
 ```
 
+What the operator surface shows:
+
+- intent list with current state and high-signal flags
+- full receipt view for a single intent
+- attempt history
+- webhook history
+- callback notification and delivery history
+- reconciliation runs
+- stitched timeline of operational evidence
+
 ## Key Docs
 
-- [docs/foundation-spec.md](docs/foundation-spec.md): product identity, trust model, system boundaries, and v1 scope
-- [docs/phase-1-implementation-blueprint.md](docs/phase-1-implementation-blueprint.md): implementation blueprint and build order
+- [docs/foundation-spec.md](docs/foundation-spec.md): product identity, trust model, scope, and design principles
+- [docs/phase-1-implementation-blueprint.md](docs/phase-1-implementation-blueprint.md): build order and implementation blueprint
 - [docs/milestone-1-invariants.md](docs/milestone-1-invariants.md): domain invariants
 - [docs/milestone-8-provider-webhook-ingestion-readme.md](docs/milestone-8-provider-webhook-ingestion-readme.md): webhook ingestion
 - [docs/milestone-9-callback-delivery-engine-readme.md](docs/milestone-9-callback-delivery-engine-readme.md): callback delivery engine
@@ -171,17 +197,16 @@ npm run dev
 - [docs/milestone-12-minimal-operator-surface-readme.md](docs/milestone-12-minimal-operator-surface-readme.md): operator UI
 - [docs/milestone-13-failure-scenario-demo-suite-readme.md](docs/milestone-13-failure-scenario-demo-suite-readme.md): demo suite
 
-## Why This Repo Exists
+## Honest Notes
 
-This project is meant to show strong engineering judgment in the parts that actually matter in money systems:
+- The migration folder is currently named `migerations/`, not `migrations/`.
+- The root `cargo run` placeholder binary is not the real app entrypoint; run the individual apps listed above.
+- The current implementation is strongest around safety, failure handling, and observability. It is intentionally not trying to be a polished end-user product.
 
-- no silent ambiguity
-- no blind retries
-- no duplicate money movement from duplicate requests
-- no loss of execution truth during worker failure
-- no confusion between provider truth, internal truth, and downstream notification truth
-- no silent reconciliation patching without evidence
+## Why This Matters
 
-## Current Note
+The real value of a payment system is not just that it works when everything is healthy.
 
-The migration folder is currently named `migerations/`. That path is preserved for repo stability right now, even though `migrations/` is the intended long-term convention.
+It is whether it preserves truth when the outcome is uncertain.
+
+That is the design center of this project.
