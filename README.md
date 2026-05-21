@@ -8,7 +8,7 @@ Safely execute payment intents while preserving truth under duplicates, retries,
 
 ## What This Project Is
 
-The Payment Intent Gateway is not a payment processor, wallet, checkout UI, or merchant SaaS product.
+The Payment Intent Gateway is not a checkout UI, wallet, banking app, or merchant SaaS platform.
 
 It is a trust boundary between a business request and real provider execution.
 
@@ -19,78 +19,169 @@ Its job is to:
 - execute intents asynchronously through a provider adapter
 - classify success, terminal failure, retryable failure, pending, and unknown outcome correctly
 - preserve attempt history and operational evidence
+- ingest provider webhooks safely
 - deliver downstream callbacks without confusing notification truth with execution truth
 - reconcile internal truth against provider truth when outcomes are uncertain
+- expose operator-readable receipts and timelines
 
-## Current Repo Status
+## Current Implementation Status
 
-The repository currently contains the foundation of the domain and persistence layers:
+The repo now contains a working vertical slice through the reliability story:
 
-- `crates/domain`: payment intent aggregate, states, attempts, reconciliation types, and invariants
-- `crates/persistence`: Postgres schema access, repository methods, and receipt-oriented read model assembly
-- `src/main.rs`: placeholder root binary that currently prints `Hello, world!`
+- `crates/domain`: payment intent aggregate, lifecycle states, attempts, reconciliation types, and invariants
+- `crates/application`: ingestion, execution, webhooks, callbacks, receipts, reconciliation, and operator-facing query services
+- `crates/persistence`: Postgres persistence, leasing, callback queueing, receipts, and evidence history
+- `apps/api`: payment intent API, receipt endpoint, and provider webhook ingestion
+- `apps/worker`: leased background execution worker
+- `apps/resolver`: unknown-outcome follow-up and status-check worker
+- `apps/reconciler`: selected-intent reconciliation runner
+- `apps/callback-worker`: downstream callback delivery worker
+- `apps/mock-provider`: controllable failure-heavy provider simulator
+- `apps/demo-receiver`: controllable downstream callback target for demo scenarios
+- `apps/operator-ui`: Next.js + TypeScript operator surface for inspecting intents end to end
 
-The repo compiles and tests pass:
+## Implemented Milestones
+
+The repo currently covers the following milestones:
+
+- Milestone 1: core domain model and invariants
+- Milestone 2: durable persistence layer
+- Milestone 3: replay-safe intent ingestion API
+- Milestone 4: queueing, leasing, and worker foundation
+- Milestone 5: failure-heavy mock provider simulator
+- Milestone 6: execution attempt logic and classification
+- Milestone 7: unknown outcome handling and follow-up
+- Milestone 8: provider webhook ingestion
+- Milestone 9: callback delivery engine
+- Milestone 10: receipt and evidence model
+- Milestone 11: reconciliation engine
+- Milestone 12: minimal operator surface
+- Milestone 13: failure scenario demo suite
+
+## Run The Stack
+
+The repo root placeholder binary is not the real app entrypoint. Run the actual services instead.
+
+Apply the SQL migrations first:
 
 ```powershell
-cargo check --workspace
-cargo test --workspace
-cargo run
+$env:PGPASSWORD = 'your-postgres-password'
+psql -h localhost -U postgres -d payment_gateway -v ON_ERROR_STOP=1 -f migerations/0001_init_payment_gateway.sql
+psql -h localhost -U postgres -d payment_gateway -v ON_ERROR_STOP=1 -f migerations/0002_add_worker_leasing.sql
+psql -h localhost -U postgres -d payment_gateway -v ON_ERROR_STOP=1 -f migerations/0003_add_unknown_outcome_follow_up.sql
+psql -h localhost -U postgres -d payment_gateway -v ON_ERROR_STOP=1 -f migerations/0004_add_callback_delivery_engine.sql
 ```
 
-## Docs
+Start the runtime services in separate terminals:
 
-- `docs/foundation-spec.md`: product identity, trust model, system boundaries, and v1 scope
-- `docs/phase-1-implementation-blueprint.md`: exact implementation blueprint for the first serious build phase
-- `docs/milestone-1-invariants.md`: foundational domain invariants
-- `docs/milestone-2-persistence-readme.md`: persistence layer goals, schema rules, and definition of done
+```powershell
+cargo run -p api
+```
 
-## v1 Scope
+```powershell
+cargo run -p worker
+```
 
-Included in v1:
+```powershell
+cargo run -p resolver
+```
 
-- payment intent ingestion
-- idempotent request handling
-- durable persistence
-- leased background execution
-- mock provider simulation
-- provider webhook ingestion
-- callback delivery with retry history
-- receipt and evidence query surfaces
-- reconciliation for ambiguous or mismatched outcomes
+```powershell
+cargo run -p callback-worker
+```
 
-Explicitly out of scope for v1:
+```powershell
+cargo run -p mock-provider
+```
 
-- customer auth and wallet flows
-- merchant onboarding platform
-- subscription billing
-- payouts
-- full accounting ledger
-- fraud platform
-- mobile apps
-- polished dashboard-heavy product work
+Optional:
 
-## Near-Term Build Order
+```powershell
+cargo run -p demo-receiver
+```
 
-1. Stabilize domain and persistence around the current schema and invariants.
-2. Add an application crate that coordinates ingestion, execution, callbacks, and reconciliation use cases.
-3. Add `apps/api` for create/query/receipt and webhook endpoints.
-4. Add `adapters/mock_provider` to drive failure-heavy scenarios.
-5. Add `apps/worker` for leasing and provider execution.
-6. Add `apps/reconciler` for scheduled truth comparison against provider state.
+```powershell
+cargo run -p reconciler
+```
+
+## Tests
+
+Run the full workspace test suite from the repo root:
+
+```powershell
+cargo test --workspace
+```
+
+The current workspace includes domain tests, ingestion tests, execution classification tests, webhook tests, callback delivery tests, reconciliation tests, receipt tests, and mock/demo app tests.
+
+## Demo Suite
+
+Milestone 13 includes a reproducible live demo suite with saved artifacts.
+
+Main runner:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-demo-scenario.ps1 -Scenario <scenario_name> -ApiBearerToken <your-api-token>
+```
+
+Artifacts are written to:
+
+```text
+demo-output/<scenario>-<timestamp>/
+```
+
+Supported scenarios:
+
+- `duplicate_request_same_idempotency`
+- `retryable_provider_outage`
+- `terminal_provider_rejection`
+- `timeout_unknown_outcome`
+- `delayed_webhook_resolves_unknown`
+- `duplicate_webhook_event`
+- `callback_delivery_failure_and_retry`
+- `reconciliation_mismatch`
+- `worker_crash_and_recovery`
+- `stale_pending_requires_recon`
+
+See [docs/demo-scenarios.md](docs/demo-scenarios.md) for the full flow and expected outcomes.
+
+## Operator UI
+
+The operator surface is a Next.js + TypeScript app in `apps/operator-ui`.
+
+Run it with:
+
+```powershell
+cd apps/operator-ui
+$env:OPERATOR_API_BASE_URL = 'http://127.0.0.1:3000'
+$env:OPERATOR_API_BEARER_TOKEN = 'your-api-token'
+npm install
+npm run dev
+```
+
+## Key Docs
+
+- [docs/foundation-spec.md](docs/foundation-spec.md): product identity, trust model, system boundaries, and v1 scope
+- [docs/phase-1-implementation-blueprint.md](docs/phase-1-implementation-blueprint.md): implementation blueprint and build order
+- [docs/milestone-1-invariants.md](docs/milestone-1-invariants.md): domain invariants
+- [docs/milestone-8-provider-webhook-ingestion-readme.md](docs/milestone-8-provider-webhook-ingestion-readme.md): webhook ingestion
+- [docs/milestone-9-callback-delivery-engine-readme.md](docs/milestone-9-callback-delivery-engine-readme.md): callback delivery engine
+- [docs/milestone-10-receipt-and-evidence-model-readme.md](docs/milestone-10-receipt-and-evidence-model-readme.md): receipt model
+- [docs/milestone-11-reconciliation-engine-readme.md](docs/milestone-11-reconciliation-engine-readme.md): reconciliation engine
+- [docs/milestone-12-minimal-operator-surface-readme.md](docs/milestone-12-minimal-operator-surface-readme.md): operator UI
+- [docs/milestone-13-failure-scenario-demo-suite-readme.md](docs/milestone-13-failure-scenario-demo-suite-readme.md): demo suite
 
 ## Why This Repo Exists
 
-The point of this project is not generic CRUD and not "send request to provider and hope."
-
-The point is to show strong engineering judgment in the parts that actually matter in money systems:
+This project is meant to show strong engineering judgment in the parts that actually matter in money systems:
 
 - no silent ambiguity
 - no blind retries
-- no duplicate movement of money from duplicate requests
-- no loss of history during failure
+- no duplicate money movement from duplicate requests
+- no loss of execution truth during worker failure
 - no confusion between provider truth, internal truth, and downstream notification truth
+- no silent reconciliation patching without evidence
 
 ## Current Note
 
-The migration folder in the current repo is named `migerations/`. The intended long-term convention is `migrations/`, but the current path is preserved for now so the repo remains stable while the next layers are built.
+The migration folder is currently named `migerations/`. That path is preserved for repo stability right now, even though `migrations/` is the intended long-term convention.
